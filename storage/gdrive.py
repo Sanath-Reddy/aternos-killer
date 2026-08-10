@@ -112,20 +112,43 @@ class GoogleDriveStorageProvider(StorageProvider):
             ) from exc
         return self._service
 
+    # ── Retry helper ──────────────────────────────────────────────────────────
+
+    def _with_retry(self, action, retries: int = 3, delay: float = 0.5):
+        """Execute action, retrying on transient socket / SSL errors."""
+        last_exc = None
+        for attempt in range(retries):
+            try:
+                return action()
+            except (HttpError, StorageError):
+                raise
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    "Drive API network/SSL glitch (attempt %d/%d): %s",
+                    attempt + 1, retries, exc,
+                )
+                self._service = None  # reset service to open fresh connection
+                time.sleep(delay * (attempt + 1))
+        raise StorageUnavailableError(f"Drive network error: {last_exc}") from last_exc
+
     # ── Manifest ──────────────────────────────────────────────────────────────
 
     def get_manifest(self) -> Optional[dict]:
         """Fetch ``manifest.json`` from Drive."""
-        try:
+        def _fetch():
             file_id = self._find_file(_MANIFEST_FILENAME, self._folder_id)
             if file_id is None:
                 return None
             content = self._download_as_bytes(file_id)
             return json.loads(content.decode("utf-8"))
+
+        try:
+            return self._with_retry(_fetch)
         except StorageError:
             raise
-        except HttpError as exc:
-            raise StorageUnavailableError(f"Drive HTTP error: {exc}") from exc
+        except Exception as exc:
+            raise StorageUnavailableError(f"Failed to fetch manifest: {exc}") from exc
 
     def update_manifest(self, manifest: dict) -> None:
         """Upload or replace ``manifest.json`` on Drive."""
@@ -253,7 +276,7 @@ class GoogleDriveStorageProvider(StorageProvider):
 
     def get_lock(self, world_id: str) -> Optional[dict]:
         """Fetch ``lock.json`` from Drive."""
-        try:
+        def _fetch():
             file_id = self._find_file(_LOCK_FILENAME, self._folder_id)
             if file_id is None:
                 return None
@@ -266,9 +289,12 @@ class GoogleDriveStorageProvider(StorageProvider):
                 )
                 return None
             return lock
+
+        try:
+            return self._with_retry(_fetch)
         except StorageError:
             raise
-        except HttpError as exc:
+        except Exception as exc:
             raise StorageUnavailableError(f"Failed to read lock: {exc}") from exc
 
     def acquire_lock(self, world_id: str, lock: dict) -> None:
@@ -349,49 +375,59 @@ class GoogleDriveStorageProvider(StorageProvider):
 
     def _find_file(self, name: str, parent_id: str) -> Optional[str]:
         """Return the Drive file ID of *name* in *parent_id*, or None."""
-        svc = self._get_service()
-        q = (
-            f"name = {json.dumps(name)} "
-            f"and '{parent_id}' in parents "
-            f"and trashed = false"
-        )
-        result = svc.files().list(q=q, fields="files(id)", pageSize=2).execute()
-        files = result.get("files", [])
-        if not files:
-            return None
-        if len(files) > 1:
-            logger.warning(
-                "Multiple files named %r in folder %r; using first", name, parent_id
+        def _call():
+            svc = self._get_service()
+            q = (
+                f"name = {json.dumps(name)} "
+                f"and '{parent_id}' in parents "
+                f"and trashed = false"
             )
-        return files[0]["id"]
+            result = svc.files().list(q=q, fields="files(id)", pageSize=2).execute()
+            files = result.get("files", [])
+            if not files:
+                return None
+            if len(files) > 1:
+                logger.warning(
+                    "Multiple files named %r in folder %r; using first", name, parent_id
+                )
+            return files[0]["id"]
+
+        return self._with_retry(_call)
 
     def _download_as_bytes(self, file_id: str) -> bytes:
-        svc = self._get_service()
-        request = svc.files().get_media(fileId=file_id)
-        buf = io.BytesIO()
-        downloader = MediaIoBaseDownload(buf, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        return buf.getvalue()
+        def _call():
+            svc = self._get_service()
+            request = svc.files().get_media(fileId=file_id)
+            buf = io.BytesIO()
+            downloader = MediaIoBaseDownload(buf, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            return buf.getvalue()
+
+        return self._with_retry(_call)
 
     def _upload_bytes(
         self, name: str, data: bytes, mime: str, parent_id: str
     ) -> str:
-        svc = self._get_service()
-        media = MediaIoBaseDownload.__class__  # satisfy type checkers — unused
-        # Use MediaIoBaseUpload for bytes.
-        from googleapiclient.http import MediaIoBaseUpload
-        media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime)
-        meta = {"name": name, "parents": [parent_id]}
-        result = svc.files().create(body=meta, media_body=media, fields="id").execute()
-        return result["id"]
+        def _call():
+            svc = self._get_service()
+            from googleapiclient.http import MediaIoBaseUpload
+            media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime)
+            meta = {"name": name, "parents": [parent_id]}
+            result = svc.files().create(body=meta, media_body=media, fields="id").execute()
+            return result["id"]
+
+        return self._with_retry(_call)
 
     def _update_bytes(self, file_id: str, data: bytes, mime: str) -> None:
-        from googleapiclient.http import MediaIoBaseUpload
-        svc = self._get_service()
-        media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime)
-        svc.files().update(fileId=file_id, media_body=media).execute()
+        def _call():
+            from googleapiclient.http import MediaIoBaseUpload
+            svc = self._get_service()
+            media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime)
+            svc.files().update(fileId=file_id, media_body=media).execute()
+
+        return self._with_retry(_call)
 
     def _get_or_create_snapshots_folder(self) -> str:
         """Return (and cache) the Drive folder ID for ``snapshots/``."""
