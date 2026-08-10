@@ -81,21 +81,27 @@ class RadminNetworkManager(NetworkManager):
         if self._cached_result is not None and (now - self._cached_time) < 5.0:
             return self._cached_result
 
-        last_adapter: Optional[str] = None
-        for detector in (self._detect_ipconfig, self._detect_powershell):
-            try:
-                adapter, ip = detector()
-                if ip:
-                    res = (adapter, ip)
-                    self._cached_result = res
-                    self._cached_time = now
-                    return res
-                if adapter:
-                    last_adapter = adapter
-            except Exception as exc:
-                logger.debug("Radmin detector failed: %s", exc)
+        # Fast detection via ipconfig (~0.05s)
+        try:
+            adapter, ip = self._detect_ipconfig()
+            res = (adapter, ip)
+            self._cached_result = res
+            self._cached_time = now
+            return res
+        except Exception as exc:
+            logger.debug("ipconfig detector failed: %s; trying powershell fallback", exc)
 
-        res = (last_adapter, None)
+        # Slow fallback via powershell only if ipconfig failed unexpectedly
+        try:
+            adapter, ip = self._detect_powershell()
+            res = (adapter, ip)
+            self._cached_result = res
+            self._cached_time = now
+            return res
+        except Exception as exc:
+            logger.debug("powershell detector failed: %s", exc)
+
+        res = (None, None)
         self._cached_result = res
         self._cached_time = now
         return res

@@ -68,6 +68,13 @@ class BlockSyncApp(ctk.CTk):
         mode = services.mode
         self.title(f"{WINDOW['title']} ({mode})")
 
+        self.deiconify()
+        self.lift()
+        try:
+            self.focus_force()
+        except Exception:
+            pass
+
     # ── Navigation ────────────────────────────────────────────────────────────
 
     def _show(self, screen: ctk.CTkFrame) -> None:

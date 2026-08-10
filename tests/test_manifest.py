@@ -161,15 +161,19 @@ class TestCompareToRemote:
         remote = make_manifest(version=185, parent_version=184)
         assert local.compare_to_remote(remote) == CompareResult.NEEDS_UPDATE
 
+    def test_needs_update_multi_version_gap(self):
+        local  = make_manifest(version=184, parent_version=183)
+        remote = make_manifest(version=186, parent_version=185)
+        assert local.compare_to_remote(remote) == CompareResult.NEEDS_UPDATE
+
     def test_local_ahead(self):
         local  = make_manifest(version=185, parent_version=184)
         remote = make_manifest(version=184, parent_version=183)
         assert local.compare_to_remote(remote) == CompareResult.LOCAL_AHEAD
 
     def test_conflict(self):
-        local  = make_manifest(version=184, parent_version=183)
-        # Remote is v186 with a different chain — neither is successor.
-        remote = make_manifest(version=186, parent_version=185)
+        local  = make_manifest(version=184, parent_version=183, sha256="a" * 64)
+        remote = make_manifest(version=184, parent_version=183, sha256="b" * 64)
         result = local.compare_to_remote(remote)
         assert result == CompareResult.CONFLICT
 

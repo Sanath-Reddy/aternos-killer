@@ -102,7 +102,7 @@ class SessionViewModel:
         if hasattr(self._session, "add_state_observer"):
             self._session.add_state_observer(self._on_state_change)
 
-        self.refresh()
+        self.refresh(sync=False)
 
     # ── Subscriptions ─────────────────────────────────────────────────────────
 
@@ -131,92 +131,128 @@ class SessionViewModel:
 
     # ── Refresh ───────────────────────────────────────────────────────────────
 
-    def refresh(self) -> None:
-        try:
-            status = self._session.get_state()
-            lock = self._session.get_lock_info()
-            compare = self._world.compare_versions()
-            local_m = self._world.get_local_manifest()
-            remote_m = self._world.get_remote_manifest()
-            server_status = self._mc.get_status()
-            net = self._network.get_network_status()
-        except Exception as exc:
-            logger.error("refresh failed: %s", exc, exc_info=True)
-            self._update(
-                error="Something went wrong.",
-                error_detail=str(exc),
-                error_type=type(exc).__name__,
-                status_message="Unable to refresh status.",
-            )
+    def refresh(self, *, sync: bool = False) -> None:
+        """Refresh status. If sync=False, offloads to background thread."""
+        if sync:
+            self._async_refresh_worker()
             return
 
-        world_name = (
-            (local_m or remote_m or {}).get("world_id")
-            or "World"
-        )
-        if isinstance(world_name, str):
-            world_name = world_name.replace("-", " ").replace("_", " ").title()
+        if getattr(self, "_refreshing", False):
+            return
+        self._refreshing = True
+        threading.Thread(target=self._async_refresh_worker, daemon=True).start()
 
-        local_v = compare.get("local_version")
-        remote_v = compare.get("remote_version")
-        display_v = remote_v if remote_v is not None else local_v
+    def _async_refresh_worker(self) -> None:
+        try:
+            status = "closed"
+            try:
+                status = self._session.get_state()
+            except Exception as exc:
+                logger.warning("get_state failed: %s", exc)
 
-        host_name = None
-        host_is_self = False
-        if lock:
-            host_name = lock.get("host_id")
-            if self._local_host_id and host_name == self._local_host_id:
-                host_is_self = True
-            # Mock self host id
-            if host_name and str(host_name).endswith("-mock") and "you" in str(host_name):
-                host_is_self = True
+            net = None
+            try:
+                net = self._network.get_network_status()
+            except Exception as exc:
+                logger.warning("get_network_status failed: %s", exc)
 
-        radmin_ip = net.ip
-        address = None
-        if radmin_ip:
-            address = f"{radmin_ip}:{self._server_port}"
-        elif lock and not host_is_self and status == "closed":
-            # Joiner may not have local Radmin IP for the host; still show port hint.
+            lock = None
+            try:
+                lock = self._session.get_lock_info()
+            except Exception as exc:
+                logger.warning("get_lock_info failed: %s", exc)
+
+            local_m = None
+            try:
+                local_m = self._world.get_local_manifest()
+            except Exception as exc:
+                logger.warning("get_local_manifest failed: %s", exc)
+
+            remote_m = None
+            try:
+                remote_m = self._world.get_remote_manifest()
+            except Exception as exc:
+                logger.warning("get_remote_manifest failed: %s", exc)
+
+            compare = {}
+            try:
+                compare = self._world.compare_versions()
+            except Exception as exc:
+                logger.warning("compare_versions failed: %s", exc)
+
+            server_status = "offline"
+            try:
+                server_status = self._mc.get_status()
+            except Exception as exc:
+                logger.warning("get_status failed: %s", exc)
+
+            world_name = (
+                (local_m or remote_m or {}).get("world_id")
+                or "World"
+            )
+            if isinstance(world_name, str):
+                world_name = world_name.replace("-", " ").replace("_", " ").title()
+
+            local_v = compare.get("local_version")
+            remote_v = compare.get("remote_version")
+            display_v = remote_v if remote_v is not None else local_v
+
+            host_name = None
+            host_is_self = False
+            if lock:
+                host_name = lock.get("host_id")
+                if self._local_host_id and host_name == self._local_host_id:
+                    host_is_self = True
+                if host_name and str(host_name).endswith("-mock") and "you" in str(host_name):
+                    host_is_self = True
+
+            radmin_ip = net.ip if net else None
+            radmin_connected = net.connected if net else False
+            radmin_msg = net.message if net else "Network status unknown."
+
             address = None
+            if radmin_ip:
+                address = f"{radmin_ip}:{self._server_port}"
+            elif lock and not host_is_self and status == "closed":
+                address = None
 
-        # For join screen: if foreign host, connection uses host's Radmin IP —
-        # V1 only knows local Radmin IP. Show local detection + port; host shares address.
-        if status == "active" and radmin_ip:
-            address = f"{radmin_ip}:{self._server_port}"
+            if status == "active" and radmin_ip:
+                address = f"{radmin_ip}:{self._server_port}"
 
-        steps = self._steps_for(status)
-        status_message = self._message_for(status, compare.get("result", ""))
+            steps = self._steps_for(status)
+            status_message = self._message_for(status, compare.get("result", ""))
 
-        download_pct = None
-        if hasattr(self._world, "get_download_progress") and getattr(
-            self._world, "_downloading", False
-        ):
-            download_pct = self._world.get_download_progress()
+            download_pct = None
+            if hasattr(self._world, "get_download_progress") and getattr(
+                self._world, "_downloading", False
+            ):
+                download_pct = self._world.get_download_progress()
 
-        # Preserve UI-level errors (e.g. Radmin) until retry/clear; session ERROR always wins.
-        keep_error = status == "error" or bool(self._snap.error_type)
-        self._update(
-            status=status,
-            world_name=world_name,
-            world_version=display_v,
-            local_version=local_v,
-            remote_version=remote_v,
-            sync_result=compare.get("result", "UNKNOWN"),
-            host_name=host_name,
-            host_is_self=host_is_self,
-            server_status=server_status,
-            server_port=self._server_port,
-            radmin_connected=net.connected,
-            radmin_ip=radmin_ip,
-            radmin_message=net.message,
-            connection_address=address,
-            progress_steps=steps,
-            status_message=status_message,
-            download_pct=download_pct,
-            error=self._snap.error if keep_error else None,
-            error_detail=self._snap.error_detail if keep_error else None,
-            error_type=self._snap.error_type if keep_error else None,
-        )
+            keep_error = status == "error" or bool(self._snap.error_type)
+            self._update(
+                status=status,
+                world_name=world_name,
+                world_version=display_v,
+                local_version=local_v,
+                remote_version=remote_v,
+                sync_result=compare.get("result", "UNKNOWN"),
+                host_name=host_name,
+                host_is_self=host_is_self,
+                server_status=server_status,
+                server_port=self._server_port,
+                radmin_connected=radmin_connected,
+                radmin_ip=radmin_ip,
+                radmin_message=radmin_msg,
+                connection_address=address,
+                progress_steps=steps,
+                status_message=status_message,
+                download_pct=download_pct,
+                error=self._snap.error if keep_error else None,
+                error_detail=self._snap.error_detail if keep_error else None,
+                error_type=self._snap.error_type if keep_error else None,
+            )
+        finally:
+            self._refreshing = False
 
     def _on_state_change(self, old: str, new: str) -> None:
         logger.debug("Session state %s -> %s", old, new)

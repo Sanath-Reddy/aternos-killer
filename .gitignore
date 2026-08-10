@@ -44,6 +44,8 @@ world.backup/
 *.zip
 
 # ─── MINECRAFT SERVER ──────────────────────────────────────────────────────────
+mc-server/
+server/
 server.jar
 server.jar.tmp
 logs/
@@ -65,3 +67,27 @@ snapshots/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# ─── LOCAL LAUNCHERS & ENV ─────────────────────────────────────────────────────
+# Scripts with hardcoded local paths or secrets
+start_*.ps1
+start_*.bat
+start_*.sh
+.env
+.env.*
+!.env.example
+
+# ─── LOGS & DATABASES ──────────────────────────────────────────────────────────
+*.log
+*.sqlite3
+*.db
+
+# ─── TEST COVERAGE ─────────────────────────────────────────────────────────────
+.coverage
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+
+# ─── GOOGLE AUTH ───────────────────────────────────────────────────────────────
+token.pickle

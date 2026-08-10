@@ -65,25 +65,51 @@ class JarDownloader:
     def ensure_jar(self, version: str) -> Path:
         """Ensure ``server.jar`` exists and is correct for *version*.
 
-        If the file already exists and passes SHA1 verification, the download
-        is skipped.  Otherwise it is downloaded.
+        If the file already exists and passes SHA1 verification (or is a custom JAR),
+        the download is skipped. Otherwise it is downloaded.
 
         Parameters
         ----------
         version:
-            Minecraft version string, e.g. ``"1.21.4"``.
+            Minecraft version string, e.g. ``"1.21.4"`` or ``"26.2"``.
 
         Returns:
             Absolute path to the verified ``server.jar``.
 
         Raises:
-            UnknownVersionError: If the version is not in Mojang's manifest.
+            UnknownVersionError: If the version is not in Mojang's manifest and no local JAR exists.
             JarDownloadError: On network or verification failure.
         """
         jar_path = self._server_dir / "server.jar"
         self._server_dir.mkdir(parents=True, exist_ok=True)
 
-        # Fetch version-specific metadata.
+        # Check existing file first.
+        if jar_path.exists():
+            try:
+                version_info = self._get_version_info(version)
+                server_download = version_info.get("downloads", {}).get("server")
+                if server_download:
+                    jar_sha1 = server_download["sha1"]
+                    actual_sha1 = _sha1_file(jar_path)
+                    if actual_sha1 == jar_sha1:
+                        logger.info(
+                            "server.jar already present and verified (%s). Skipping download.",
+                            version,
+                        )
+                        return jar_path
+                    else:
+                        logger.warning(
+                            "Existing server.jar SHA1 mismatch (expected %s, got %s). Re-downloading …",
+                            jar_sha1, actual_sha1,
+                        )
+            except UnknownVersionError:
+                logger.info(
+                    "server.jar present locally for custom version %s. Skipping Mojang download.",
+                    version,
+                )
+                return jar_path
+
+        # Fetch version-specific metadata for download.
         logger.info("Fetching Mojang version manifest …")
         version_info = self._get_version_info(version)
         server_download = version_info.get("downloads", {}).get("server")
@@ -96,22 +122,6 @@ class JarDownloader:
         jar_url  = server_download["url"]
         jar_sha1 = server_download["sha1"]
         jar_size = server_download.get("size", 0)
-
-        # Check existing file.
-        if jar_path.exists():
-            actual_sha1 = _sha1_file(jar_path)
-            if actual_sha1 == jar_sha1:
-                logger.info(
-                    "server.jar already present and verified (%s). Skipping download.",
-                    version,
-                )
-                return jar_path
-            else:
-                logger.warning(
-                    "Existing server.jar SHA1 mismatch (expected %s, got %s). "
-                    "Re-downloading …",
-                    jar_sha1, actual_sha1,
-                )
 
         # Download.
         logger.info(

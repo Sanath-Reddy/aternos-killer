@@ -99,7 +99,7 @@ class GoogleDriveStorageProvider(StorageProvider):
         self._service = None           # lazy init
         self._http = None
         self._snapshots_folder_id: Optional[str] = None
-        self._api_lock = threading.Lock()
+        self._api_lock = threading.RLock()
 
     # ── Authentication (lazy) ─────────────────────────────────────────────────
 
@@ -168,13 +168,7 @@ class GoogleDriveStorageProvider(StorageProvider):
                         "Drive API network/SSL glitch (attempt %d/%d): %s",
                         attempt + 1, retries, exc,
                     )
-                    if self._http is not None:
-                        try:
-                            self._http.connections.clear()
-                        except Exception:
-                            pass
                     self._service = None
-                    self._http = None
                     time.sleep(delay * (attempt + 1))
             raise StorageUnavailableError(f"Drive network error: {last_exc}") from last_exc
 
@@ -277,9 +271,9 @@ class GoogleDriveStorageProvider(StorageProvider):
         tmp_dest = dest.parent / (dest.name + ".downloading")
 
         logger.info("Downloading snapshot %s …", remote_name)
-        try:
+        def _do_download():
             svc = self._get_service()
-            request = svc.files().get_media(fileId=file_id)
+            request = svc.files().get_media(fileId=file_id, supportsAllDrives=True)
 
             with tmp_dest.open("wb") as fh:
                 downloader = MediaIoBaseDownload(fh, request, chunksize=10 * 1024 * 1024)
@@ -289,6 +283,9 @@ class GoogleDriveStorageProvider(StorageProvider):
                     if status:
                         pct = int(status.progress() * 100)
                         logger.debug("Download progress: %d%%", pct)
+
+        try:
+            self._with_retry(_do_download)
 
             # Verify hash.
             actual = _sha256_file(tmp_dest)
@@ -304,6 +301,7 @@ class GoogleDriveStorageProvider(StorageProvider):
             logger.info("Snapshot downloaded and verified: %s", remote_name)
 
         except StorageError:
+            tmp_dest.unlink(missing_ok=True)
             raise
         except HttpError as exc:
             tmp_dest.unlink(missing_ok=True)
@@ -354,8 +352,10 @@ class GoogleDriveStorageProvider(StorageProvider):
 
             now = datetime.now(tz=timezone.utc)
             if expires > now:
-                # Lock is still valid — check if it's ours.
-                if existing.get("session_id") != lock.get("session_id"):
+                # Lock is still valid — check if it's ours (same host or same session).
+                is_same_host = existing.get("host_id") and existing.get("host_id") == lock.get("host_id")
+                is_same_session = existing.get("session_id") == lock.get("session_id")
+                if not (is_same_host or is_same_session):
                     raise LockConflictError(existing)
                 # It's ours; refresh in place.
                 logger.debug("Lock already held by us; refreshing.")
@@ -386,7 +386,7 @@ class GoogleDriveStorageProvider(StorageProvider):
         try:
             file_id = self._find_file(_LOCK_FILENAME, self._folder_id)
             if file_id:
-                self._get_service().files().delete(fileId=file_id).execute()
+                self._get_service().files().delete(fileId=file_id, supportsAllDrives=True).execute()
             logger.info("Host lock released (session=%s)", session_id)
         except HttpError as exc:
             raise StorageError(f"Failed to release lock: {exc}") from exc
@@ -430,6 +430,17 @@ class GoogleDriveStorageProvider(StorageProvider):
                 includeItemsFromAllDrives=True,
             ).execute()
             files = result.get("files", [])
+            if not files and parent_id:
+                q_fb = f"name = {json.dumps(name)} and trashed = false"
+                res_fb = svc.files().list(
+                    q=q_fb,
+                    fields="files(id)",
+                    pageSize=2,
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                ).execute()
+                files = res_fb.get("files", [])
+
             if not files:
                 return None
             if len(files) > 1:
@@ -446,13 +457,7 @@ class GoogleDriveStorageProvider(StorageProvider):
     def _download_as_bytes(self, file_id: str) -> bytes:
         def _call():
             svc = self._get_service()
-            request = svc.files().get_media(fileId=file_id, supportsAllDrives=True)
-            buf = io.BytesIO()
-            downloader = MediaIoBaseDownload(buf, request)
-            done = False
-            while not done:
-                _, done = downloader.next_chunk()
-            return buf.getvalue()
+            return svc.files().get_media(fileId=file_id, supportsAllDrives=True).execute()
 
         return self._with_retry(_call)
 
