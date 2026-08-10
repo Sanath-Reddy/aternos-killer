@@ -34,6 +34,7 @@ import hashlib
 import io
 import json
 import logging
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -98,6 +99,7 @@ class GoogleDriveStorageProvider(StorageProvider):
         self._service = None           # lazy init
         self._http = None
         self._snapshots_folder_id: Optional[str] = None
+        self._api_lock = threading.Lock()
 
     # ── Authentication (lazy) ─────────────────────────────────────────────────
 
@@ -152,28 +154,29 @@ class GoogleDriveStorageProvider(StorageProvider):
     # ── Retry helper ──────────────────────────────────────────────────────────
 
     def _with_retry(self, action, retries: int = 3, delay: float = 0.2):
-        """Execute action, retrying on transient socket / SSL errors."""
-        last_exc = None
-        for attempt in range(retries):
-            try:
-                return action()
-            except (HttpError, StorageError):
-                raise
-            except Exception as exc:
-                last_exc = exc
-                logger.warning(
-                    "Drive API network/SSL glitch (attempt %d/%d): %s",
-                    attempt + 1, retries, exc,
-                )
-                if self._http is not None:
-                    try:
-                        self._http.connections.clear()
-                    except Exception:
-                        pass
-                self._service = None
-                self._http = None
-                time.sleep(delay * (attempt + 1))
-        raise StorageUnavailableError(f"Drive network error: {last_exc}") from last_exc
+        """Execute action under a thread lock, retrying on transient socket / SSL errors."""
+        with self._api_lock:
+            last_exc = None
+            for attempt in range(retries):
+                try:
+                    return action()
+                except (HttpError, StorageError):
+                    raise
+                except Exception as exc:
+                    last_exc = exc
+                    logger.warning(
+                        "Drive API network/SSL glitch (attempt %d/%d): %s",
+                        attempt + 1, retries, exc,
+                    )
+                    if self._http is not None:
+                        try:
+                            self._http.connections.clear()
+                        except Exception:
+                            pass
+                    self._service = None
+                    self._http = None
+                    time.sleep(delay * (attempt + 1))
+            raise StorageUnavailableError(f"Drive network error: {last_exc}") from last_exc
 
     # ── Manifest ──────────────────────────────────────────────────────────────
 
