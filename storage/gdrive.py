@@ -39,6 +39,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import httplib2
+import google_auth_httplib2
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -67,6 +69,7 @@ _MIME_OCTET        = "application/octet-stream"
 
 # Resumable upload threshold: use resumable for files > 5 MB
 _RESUMABLE_THRESHOLD = 5 * 1024 * 1024
+_HTTP_TIMEOUT_SECONDS = 15.0
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -100,7 +103,10 @@ class GoogleDriveStorageProvider(StorageProvider):
             creds = service_account.Credentials.from_service_account_file(
                 str(self._credentials_file), scopes=_SCOPES
             )
-            self._service = build("drive", "v3", credentials=creds, cache_discovery=False)
+            http = google_auth_httplib2.AuthorizedHttp(
+                creds, http=httplib2.Http(timeout=_HTTP_TIMEOUT_SECONDS)
+            )
+            self._service = build("drive", "v3", http=http, cache_discovery=False)
             logger.info("Google Drive service authenticated (service account)")
         except FileNotFoundError as exc:
             raise StorageUnavailableError(
@@ -114,7 +120,7 @@ class GoogleDriveStorageProvider(StorageProvider):
 
     # ── Retry helper ──────────────────────────────────────────────────────────
 
-    def _with_retry(self, action, retries: int = 3, delay: float = 0.5):
+    def _with_retry(self, action, retries: int = 3, delay: float = 0.2):
         """Execute action, retrying on transient socket / SSL errors."""
         last_exc = None
         for attempt in range(retries):
