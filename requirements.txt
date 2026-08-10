@@ -9,6 +9,9 @@ zstandard>=0.22.0
 # HTTP (for Mojang version manifest)
 requests>=2.31.0
 
+# UI (Developer 2)
+customtkinter>=5.2.0
+
 # Testing
 pytest>=8.0
 pytest-mock>=3.12

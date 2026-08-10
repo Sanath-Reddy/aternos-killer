@@ -1,31 +1,25 @@
 """
-BlockSync — main entry point.
+BlockSync — application entry point.
 
-For development/testing: python main.py
-The full UI is owned by Developer 2 and will replace this stub.
+Launches the Developer 2 UI. Core services are wired via ui.app_services
+(mocks by default; set BLOCKSYNC_USE_MOCKS=0 plus config env vars for real).
 """
+
+from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
-
-logger = logging.getLogger("blocksync")
 
 
 def main() -> None:
-    logger.info("BlockSync core started (dev stub)")
-    logger.info(
-        "To use BlockSync, import and call the service layer:\n"
-        "  from core.session_service import SessionService\n"
-        "  from core.world_service    import WorldService\n"
-        "  from core.minecraft_service import MinecraftService\n"
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
     )
+    from ui.app import run_app
+
+    run_app()
 
 
 if __name__ == "__main__":

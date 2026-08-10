@@ -271,12 +271,122 @@ ERROR      ──→ CLOSED (via reset_error())
 ## Repository Rules for Developer 2
 
 - **DO NOT** import from `storage/gdrive.py`, `session/session.py`,
-  `session/lock.py`, `world/manager.py`, or `minecraft/manager.py` directly.
-- **DO** import only from `core/session_service.py`, `core/world_service.py`,
-  `core/minecraft_service.py`.
-- If you need a new capability exposed, ask Developer 1 to add it to a service.
+  `session/lock.py`, `world/manager.py`, or `minecraft/manager.py` directly
+  from UI screens / view-models.
+- **DO** import only from `core.session_service`, `core.world_service`,
+  `core.minecraft_service`, plus Developer 2’s own `ui/` and `network/`.
+- Wiring of real core objects happens only in `ui/app_services.py`.
+- If you need a new capability exposed, ask Developer 1 to add it to a service
+  (see **UI Integration Requests** below).
 - If Developer 1 changes a service method signature, it will be documented here
   immediately and a `BREAKING CHANGE` comment added to the service file.
+
+---
+
+## Running the UI (Developer 2)
+
+```powershell
+cd aternos-killer
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python main.py
+```
+
+By default the UI uses **mock services** so you can exercise Host / Join /
+STOP & SAVE without Drive credentials or a Minecraft JAR.
+
+### Useful environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `BLOCKSYNC_USE_MOCKS` | `1` | Set `0` to attempt real core wiring |
+| `BLOCKSYNC_STATIC_NETWORK` | `0` | Use a fixed demo IP instead of Radmin detection |
+| `BLOCKSYNC_STATIC_IP` | `10.0.0.2` | IP when static network is enabled |
+| `BLOCKSYNC_SERVER_PORT` | `25565` | Interim port until `MinecraftService.get_server_port()` exists |
+| `BLOCKSYNC_MOCK_FOREIGN_HOST` | _(empty)_ | Simulate another host holding the lock |
+| `BLOCKSYNC_MOCK_SYNC` | `UP_TO_DATE` | `NEEDS_UPDATE` / `CONFLICT` / `LOCAL_AHEAD` |
+| `BLOCKSYNC_MOCK_LOCAL_VERSION` | `184` | Mock local world version |
+| `BLOCKSYNC_MOCK_REMOTE_VERSION` | `184` | Mock remote world version |
+
+Real mode (when `world/` is available and Drive is configured):
+
+```powershell
+$env:BLOCKSYNC_USE_MOCKS = "0"
+$env:BLOCKSYNC_WORLD_ID = "survival"
+$env:BLOCKSYNC_WORLD_DIR = "C:\mc-server\world"
+$env:BLOCKSYNC_SERVER_DIR = "C:\mc-server"
+$env:BLOCKSYNC_GDRIVE_FOLDER_ID = "<folder-id>"
+$env:BLOCKSYNC_CREDENTIALS_FILE = "C:\secrets\service_account.json"
+python main.py
+```
+
+If real wiring fails (missing `world/` package, incomplete env, bad credentials),
+the UI logs a warning and falls back to mocks.
+
+### UI tests
+
+```powershell
+pytest tests/test_radmin_network.py tests/test_session_vm.py -v
+```
+
+---
+
+## UI architecture
+
+```
+main.py
+  → ui.app.run_app()
+      → ui.app_services.build_app_services()
+      → BlockSyncApp (CustomTkinter)
+           HomeScreen / HostingScreen / JoinScreen
+                ↓
+           SessionViewModel
+                ↓
+           SessionService | WorldService | MinecraftService
+           NetworkManager (RadminNetworkManager)
+```
+
+- `begin_host` / `end_host` run on background threads.
+- `add_state_observer` + a 2s poll keep the UI fresh.
+- STOP is labeled **STOP & SAVE** (save → snapshot → upload → release lock).
+- Errors show friendly copy; raw details are behind **VIEW DETAILS** / **VIEW LOG**.
+
+### Radmin behavior
+
+- Detect adapter name containing `Radmin VPN` (case-insensitive).
+- Read IPv4 from that adapter only — never assume `26.x.x.x`.
+- If unavailable: show “Not detected” and block HOST with a clear message.
+- Connection address displayed as `<radmin-ip>:<port>` with **COPY ADDRESS**.
+
+---
+
+## UI Integration Requests (for Developer 1)
+
+These are needed for full production UX. UI currently uses safe interim behavior.
+
+1. **`MinecraftService.get_server_port() -> int`**  
+   Read `server-port` from `server.properties`.  
+   *Interim:* `BLOCKSYNC_SERVER_PORT` / default `25565`.
+
+2. **Progress / phase callbacks on `begin_host`**  
+   e.g. `acquiring_lock`, `syncing` (+ download %), `starting_minecraft`.  
+   *Interim:* checklist driven by FSM `starting` → `active`.
+
+3. **`WorldService.sync_world()`** (download/apply without hosting)  
+   For Home **UPDATE WORLD**.  
+   *Interim:* mock-only `sync_world()`; real mode relies on sync inside `begin_host`.
+
+4. **Distinguish Drive unreachable vs no remote manifest**  
+   Today both can look like `None` to the UI.
+
+5. **Restore / ship the `world/` package**  
+   Required for real `WorldService` / `Session` imports.
+
+6. **Optional: host Radmin IP on the lock**  
+   So joiners can show the host’s address without asking in chat.
+
+7. **Player count** — defer until a core API exists (not required for V1).
 
 ---
 
@@ -289,4 +399,5 @@ ERROR      ──→ CLOSED (via reset_error())
 | 3 | Google Drive storage (upload/download/manifest/lock) | ✅ Done |
 | 4 | Host lock + Session orchestration | ✅ Done |
 | 5 | Public service APIs | ✅ Done |
-| 6 | Failure hardening + retry + UI integration | 🔜 Next |
+| 6 | UI shell + mocks + Radmin + connection UX | ✅ Done (Dev2) |
+| 7 | Failure hardening + real-mode UI verification | 🔜 Next (needs `world/`) |

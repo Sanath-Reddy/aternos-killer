@@ -59,6 +59,20 @@ aternos-killer/
 │   ├── lock.py             # HostLock + LockManager
 │   └── session.py          # Session orchestrator
 │
+├── ui/                     # Developer 2 — CustomTkinter application
+│   ├── app.py              # Window shell + screen router
+│   ├── app_services.py     # Mock / real core wiring
+│   ├── theme.py
+│   ├── mocks.py            # Offline stand-ins matching core shapes
+│   ├── viewmodels/
+│   │   └── session_vm.py   # SessionViewModel (UI state)
+│   ├── screens/            # Home, Hosting, Join, error dialogs
+│   └── widgets/            # Status badge, progress steps, copy address
+│
+├── network/                # Developer 2 — VPN detection (Radmin V1)
+│   ├── manager.py          # NetworkManager ABC + NetworkStatus
+│   └── radmin.py           # Radmin VPN adapter / IPv4 detection
+│
 ├── config/
 │   └── settings.py         # BlockSyncConfig
 │
@@ -67,7 +81,9 @@ aternos-killer/
 │   ├── test_manifest.py
 │   ├── test_snapshot.py
 │   ├── test_lock.py
-│   └── test_minecraft_manager.py
+│   ├── test_minecraft_manager.py
+│   ├── test_radmin_network.py
+│   └── test_session_vm.py
 │
 ├── ARCHITECTURE.md         ← this file
 ├── DEVELOPMENT.md
@@ -293,6 +309,60 @@ The UI layer must only call these three classes:
 
 All return types are plain `dict`/`str`/`bool`/`list` — no internal types leak
 to Developer 2.
+
+---
+
+### `ui/` — Application shell (Developer 2)
+
+CustomTkinter desktop UI. Dependency direction:
+
+```
+UI screens / widgets
+        ↓
+SessionViewModel
+        ↓
+core.* services  +  network.NetworkManager
+```
+
+Screens never import Google Drive, world directories, host locks, or Minecraft
+process internals.
+
+**SessionViewModel** exposes: `status`, `worldName`/`worldVersion`, sync result,
+host name, Radmin status/IP, server port/status, `connectionAddress`,
+progress steps, and friendly errors.
+
+**User flows:**
+
+1. **Host** — Home → HOST WORLD → Hosting progress → ACTIVE with COPY ADDRESS → STOP & SAVE → CLOSED
+2. **Join** — Home sees foreign lock → JOIN SESSION → copy address → paste in Minecraft (client not launched in V1)
+3. **Conflict** — `LOCAL_AHEAD` / `CONFLICT` banner with VIEW DETAILS only (no overwrite action)
+
+`ui/app_services.py` defaults to mocks (`BLOCKSYNC_USE_MOCKS=1`). Real mode
+wires Dev1 services when env config is complete and `world/` imports succeed.
+
+---
+
+### `network/` — Connectivity (Developer 2)
+
+`NetworkManager` is the replaceable VPN abstraction:
+
+```
+is_available() → bool
+get_adapter_name() → Optional[str]
+get_ip() → Optional[str]
+get_network_status() → NetworkStatus
+```
+
+V1 implementation: `RadminNetworkManager` (Windows). Detects adapters whose
+name contains “Radmin VPN” via PowerShell `Get-NetIPConfiguration`, with
+`ipconfig` parsing as fallback. **Never hardcodes `26.x.x.x`.**
+
+Known limitations:
+
+- Windows-first detection in V1
+- Joiners do not receive the host’s Radmin IP from Drive locks yet — host
+  shares the address shown in BlockSync (COPY ADDRESS)
+- WireGuard (or other) can replace Radmin by implementing `NetworkManager`
 
 ---
 
