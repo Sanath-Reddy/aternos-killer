@@ -11,6 +11,7 @@ import logging
 import platform
 import re
 import subprocess
+import time
 from typing import Optional, Tuple
 
 from network.manager import NetworkManager, NetworkStatus
@@ -28,6 +29,10 @@ class RadminNetworkManager(NetworkManager):
     """Radmin VPN detection via Windows network APIs / commands."""
 
     provider_name = "radmin"
+
+    def __init__(self) -> None:
+        self._cached_result: Optional[Tuple[Optional[str], Optional[str]]] = None
+        self._cached_time: float = 0.0
 
     def is_available(self) -> bool:
         return self.get_ip() is not None
@@ -72,18 +77,28 @@ class RadminNetworkManager(NetworkManager):
         if platform.system().lower() != "windows":
             return None, None
 
+        now = time.time()
+        if self._cached_result is not None and (now - self._cached_time) < 5.0:
+            return self._cached_result
+
         last_adapter: Optional[str] = None
-        for detector in (self._detect_powershell, self._detect_ipconfig):
+        for detector in (self._detect_ipconfig, self._detect_powershell):
             try:
                 adapter, ip = detector()
                 if ip:
-                    return adapter, ip
+                    res = (adapter, ip)
+                    self._cached_result = res
+                    self._cached_time = now
+                    return res
                 if adapter:
                     last_adapter = adapter
             except Exception as exc:
                 logger.debug("Radmin detector failed: %s", exc)
 
-        return last_adapter, None
+        res = (last_adapter, None)
+        self._cached_result = res
+        self._cached_time = now
+        return res
 
     def _detect_powershell(self) -> Tuple[Optional[str], Optional[str]]:
         """Use Get-NetIPConfiguration to find Radmin VPN IPv4."""
