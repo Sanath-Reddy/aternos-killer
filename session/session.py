@@ -173,11 +173,11 @@ class Session:
             # 4. Download if needed.
             if compare in (CompareResult.NEEDS_UPDATE, CompareResult.NO_LOCAL):
                 if remote is None:
-                    raise SessionError(
-                        "Drive has no manifest but local also has none. "
-                        "Cannot start — no world to download."
+                    logger.info(
+                        "Drive has no manifest — first-time host session initialization."
                     )
-                self._download_world(remote)
+                else:
+                    self._download_world(remote)
 
             # 5. Start Minecraft.
             self._mc.start()
