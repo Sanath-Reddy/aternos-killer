@@ -339,7 +339,7 @@ class MinecraftManager:
         try:
             self._process.stdin.write(cmd + "\n")
             self._process.stdin.flush()
-            logger.debug("→ MC command: %r", cmd)
+            logger.debug("-> MC command: %r", cmd)
         except (BrokenPipeError, OSError) as exc:
             logger.error("Failed to send command %r: %s", cmd, exc)
             raise ServerNotRunningError(f"stdin write failed: {exc}") from exc
@@ -366,7 +366,7 @@ class MinecraftManager:
             old = self._status
             self._status = new_status
         if old != new_status:
-            logger.debug("ProcessStatus: %s → %s", old.value, new_status.value)
+            logger.debug("ProcessStatus: %s -> %s", old.value, new_status.value)
 
     def _require_status(self, required: ProcessStatus, op: str) -> None:
         current = self.status

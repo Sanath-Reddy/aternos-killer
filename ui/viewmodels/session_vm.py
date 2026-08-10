@@ -219,7 +219,7 @@ class SessionViewModel:
         )
 
     def _on_state_change(self, old: str, new: str) -> None:
-        logger.debug("Session state %s → %s", old, new)
+        logger.debug("Session state %s -> %s", old, new)
         self.refresh()
 
     # ── Actions ───────────────────────────────────────────────────────────────

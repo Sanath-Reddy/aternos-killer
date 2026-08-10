@@ -303,7 +303,7 @@ class Session:
                     minecraft_version=self._config.minecraft_version,
                 )
 
-            logger.info("Updating manifest → v%s …", new_manifest.version)
+            logger.info("Updating manifest -> v%s ...", new_manifest.version)
             self._provider.update_manifest(new_manifest.to_dict())
             self._wm.save_local_manifest(new_manifest)
             with self._state_lock:

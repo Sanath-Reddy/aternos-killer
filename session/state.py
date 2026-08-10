@@ -61,7 +61,7 @@ class InvalidTransitionError(Exception):
 
     def __init__(self, from_state: SessionState, to_state: SessionState) -> None:
         super().__init__(
-            f"Invalid session transition: {from_state.value!r} → {to_state.value!r}"
+            f"Invalid session transition: {from_state.value!r} -> {to_state.value!r}"
         )
         self.from_state = from_state
         self.to_state = to_state
@@ -156,7 +156,7 @@ class SessionFSM:
             self._state = new_state
 
         logger.info(
-            "Session state: %s → %s",
+            "Session state: %s -> %s",
             old_state.value,
             new_state.value,
         )
