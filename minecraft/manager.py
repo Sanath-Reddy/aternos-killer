@@ -402,18 +402,37 @@ class MinecraftManager:
         logger.debug("MC stdout reader: EOF reached")
 
     def _watchdog_loop(self) -> None:
-        """Daemon thread: detect unexpected process exit (crash)."""
+        """Daemon thread: poll for unexpected process exit (crash).
+
+        We poll ``process.poll()`` rather than calling ``process.wait()``
+        so that tests can control the apparent liveness of the process via
+        the mock's ``poll.return_value`` without the thread immediately
+        unblocking on a synchronous ``wait()``.
+        """
+        import time as _time
         assert self._process is not None
-        self._process.wait()   # blocks until the process exits
 
-        with self._status_lock:
-            current = self._status
+        while True:
+            _time.sleep(0.25)
+            rc = self._process.poll()
+            if rc is None:
+                continue  # process still running
 
-        if current not in (ProcessStatus.NOT_RUNNING, ProcessStatus.STOPPING):
-            logger.error(
-                "Minecraft process exited unexpectedly (rc=%s) — CRASH detected!",
-                self._process.returncode if self._process else "?",
-            )
-            self._set_status(ProcessStatus.CRASHED)
-        else:
-            logger.debug("Watchdog: process exited normally")
+            # Process has exited. Check if it was expected.
+            with self._status_lock:
+                current = self._status
+
+            # A crash is only meaningful while the server was expected to be live.
+            if current in (ProcessStatus.STARTING, ProcessStatus.READY):
+                logger.error(
+                    "Minecraft process exited unexpectedly (rc=%s) — CRASH detected!",
+                    rc,
+                )
+                self._set_status(ProcessStatus.CRASHED)
+            else:
+                logger.debug(
+                    "Watchdog: process exited normally (rc=%s, status was %s)",
+                    rc, current.value,
+                )
+            break
+

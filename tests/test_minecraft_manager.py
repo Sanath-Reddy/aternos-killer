@@ -73,8 +73,14 @@ class TestStart:
     def test_already_running_raises(self, tmp_path):
         mgr = make_manager(tmp_path)
         proc = fake_process(["[Server thread/INFO]: Done (1.0s)! For help"])
+        # Keep poll() returning None so the manager believes the process is alive.
+        proc.poll.return_value = None
+        proc.wait.return_value = 0  # watchdog will block on wait() — that's fine
         with patch("subprocess.Popen", return_value=proc):
             mgr.start()
+        # The FSM should now report STARTING (or READY after reader thread).
+        # Either way, a second start() must raise.
+        time.sleep(0.1)
         with pytest.raises(ServerAlreadyRunningError):
             with patch("subprocess.Popen", return_value=proc):
                 mgr.start()
@@ -82,6 +88,8 @@ class TestStart:
     def test_status_changes_to_starting(self, tmp_path):
         mgr = make_manager(tmp_path)
         proc = fake_process([])
+        # Keep process appearing alive so watchdog doesn't fire CRASHED.
+        proc.poll.return_value = None
         with patch("subprocess.Popen", return_value=proc):
             mgr.start()
         # Status should be STARTING (process running, no ready signal yet).
@@ -99,9 +107,12 @@ class TestWaitUntilReady:
             "[Server thread/INFO]: Starting Minecraft server",
             "[Server thread/INFO]: Done (1.234s)! For help, type \"help\"",
         ])
+        # Keep poll() returning None; the reader thread will set READY from the
+        # Done signal before the watchdog could ever see an exit.
+        proc.poll.return_value = None
         with patch("subprocess.Popen", return_value=proc):
             mgr.start()
-        time.sleep(0.2)  # let reader thread process the line
+        time.sleep(0.3)  # let reader thread process the line
         assert mgr.status == ProcessStatus.READY
 
     def test_timeout_raises(self, tmp_path):
@@ -181,16 +192,17 @@ class TestCrashDetection:
             ["[INFO]: Done (1.0s)!", "[INFO]: Something went wrong"],
             returncode=1,
         )
-        # process.poll returns None at first (running), then 1 (exited).
-        proc.poll.side_effect = [None, None, 1]
+        # poll() returns None (alive) several times, then 1 (process exited).
+        # The watchdog polls every 0.25s, so 3 Nones = ~0.75s before crash fires.
+        proc.poll.side_effect = [None, None, None, 1] + [1] * 20
         with patch("subprocess.Popen", return_value=proc):
             mgr.start()
-        time.sleep(0.4)  # let watchdog + reader threads run
+        time.sleep(0.3)  # let reader thread process lines; READY is set
 
-        # After process exits unexpectedly, status should be CRASHED.
-        # (May take a moment for watchdog thread to notice.)
-        for _ in range(10):
+        # After process appears to exit, watchdog should set CRASHED.
+        for _ in range(20):
             if mgr.status == ProcessStatus.CRASHED:
                 break
-            time.sleep(0.1)
+            time.sleep(0.15)
         assert mgr.status == ProcessStatus.CRASHED
+
