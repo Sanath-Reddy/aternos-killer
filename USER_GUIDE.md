@@ -8,19 +8,15 @@ Welcome to **BlockSync**! BlockSync lets a trusted group of friends share and ho
 
 1. [Overview & Concept](#-overview--concept)
 2. [How to Give BlockSync a World](#-how-to-give-blocksync-a-world)
-   - [Option A: Starting Fresh (New World)](#option-a-starting-fresh-new-world)
-   - [Option B: Using an Existing Singleplayer World](#option-b-using-an-existing-singleplayer-world)
-   - [Option C: Using an Existing Server World](#option-c-using-an-existing-server-world)
-3. [Step-by-Step: How to Play Together](#-step-by-step-how-to-play-together)
-   - [Step 1: Host Launches BlockSync](#step-1-host-launches-blocksync)
-   - [Step 2: Host Starts the Server](#step-2-host-starts-the-server)
-   - [Step 3: Host & Friends Connect in Minecraft](#step-3-host--friends-connect-in-minecraft)
-   - [Step 4: Ending the Session (Saving & Uploading)](#step-4-ending-the-session-saving--uploading)
-   - [Step 5: Handoff to Next Host (e.g., Alice → Bob)](#step-5-handoff-to-next-host-eg-alice--bob)
-4. [Prerequisites & Setup](#-prerequisites--setup)
-5. [Running BlockSync](#-running-blocksync)
-6. [Troubleshooting & Conflict Resolution](#-troubleshooting--conflict-resolution)
-7. [Environment Variables Reference](#-environment-variables-reference)
+3. [Using Mods (Fabric / Forge / NeoForge)](#-using-mods-fabric--forge--neoforge)
+   - [Step 1: Setting up a Modded Server JAR](#step-1-setting-up-a-modded-server-jar)
+   - [Step 2: Adding Mods to the `mods/` Folder](#step-2-adding-mods-to-the-mods-folder)
+   - [Step 3: Client-Side Mod Matching](#step-3-client-side-mod-matching)
+4. [Step-by-Step: How to Play Together](#-step-by-step-how-to-play-together)
+5. [Prerequisites & Setup](#-prerequisites--setup)
+6. [Running BlockSync](#-running-blocksync)
+7. [Troubleshooting & Conflict Resolution](#-troubleshooting--conflict-resolution)
+8. [Environment Variables Reference](#-environment-variables-reference)
 
 ---
 
@@ -75,7 +71,32 @@ If you have a world from another server or Aternos export:
 1. Extract/copy the world folder into `c:\Users\sanat\Desktop\minecraft project\mc-server\world`.
 2. Ensure files like `level.dat`, `region/`, `playerdata/` are located in `mc-server\world\`.
 
-> 💡 **First Host Sync**: When the host starts BlockSync for the first time with a local world, BlockSync packages it into **Snapshot Version 1**, uploads it to your Google Drive folder, and creates `manifest.json`.
+---
+
+## 🔌 Using Mods (Fabric / Forge / NeoForge)
+
+Yes! You can run modded Minecraft (Fabric, Forge, NeoForge, Quilt) with BlockSync. Here is how:
+
+### Step 1: Setting up a Modded Server JAR
+By default, BlockSync downloads Vanilla Minecraft server `server.jar`. To run mods:
+1. Download your preferred mod loader installer (e.g. [Fabric Server Installer](https://fabricmc.net/use/server/) or [Forge Installer](https://files.minecraftforge.net/)).
+2. Install/extract the server files into your server directory:
+   `c:\Users\sanat\Desktop\minecraft project\mc-server`
+3. Ensure the main executable jar is named **`server.jar`** (or rename `fabric-server-launch.jar` to `server.jar`).
+
+### Step 2: Adding Mods to the `mods/` Folder
+1. Inside `mc-server`, create a subfolder named **`mods`**:
+   📍 `c:\Users\sanat\Desktop\minecraft project\mc-server\mods`
+2. Place all your `.jar` mod files inside this `mods/` folder.
+3. (Optional) If mods require config files, place them in:
+   📍 `c:\Users\sanat\Desktop\minecraft project\mc-server\config`
+
+### Step 3: Client-Side Mod Matching
+> ⚠️ **Important**: All friends joining the server must have:
+> 1. The matching Mod Loader (Fabric/Forge) installed on their Minecraft client launcher.
+> 2. The exact same `.jar` mod files placed in their local `%appdata%\.minecraft\mods` folder.
+> 
+> *Tip: Share a ZIP file of your `mods` folder with your friends so everyone has identical mods!*
 
 ---
 
@@ -94,17 +115,16 @@ Double-click **`start_blocksync.bat`** (or run `.\start_blocksync.ps1` in PowerS
 
 ### Step 3: Host & Friends Connect in Minecraft
 1. Look at the **Connection Address** box in BlockSync (e.g. `26.12.34.56:25565`).
-2. Open **Minecraft Java Edition (v1.21.4)**.
+2. Open **Minecraft Java Edition**.
 3. Go to **Multiplayer** → **Direct Connection** (or **Add Server**).
 4. Enter the address:
-   - **Friends (Joining over Radmin VPN)**: Enter Host's Radmin IP address (e.g. `26.12.34.56:25565`).
-   - **Host (Same PC)**: Enter `127.0.0.1:25565` or `localhost`.
+   - **Friends (Joining via Radmin VPN)**: Host's Radmin IP (`26.12.34.56:25565`).
+   - **Host (Same PC)**: `127.0.0.1:25565` or `localhost`.
 5. Click **Join Server** and play together!
 
 ### Step 4: Ending the Session (Saving & Uploading)
-1. When everyone is done playing, all players leave the Minecraft server.
-2. Host clicks **Stop & Save World** in BlockSync.
-3. BlockSync automatically:
+1. When finished playing, Host clicks **Stop & Save World** in BlockSync.
+2. BlockSync automatically:
    - Sends `save-all flush` to Minecraft to force a full save.
    - Gracefully stops the server process.
    - Creates a compressed `.tar.zst` snapshot.
@@ -116,7 +136,7 @@ Next time your group plays:
 1. **Bob** opens BlockSync on his computer.
 2. Bob clicks **Host World**.
 3. BlockSync sees that Alice uploaded **Version 2** to Google Drive.
-4. BlockSync automatically downloads Version 2 to Bob's PC, extracts it safely, acquires the lock, and starts Minecraft.
+4. BlockSync automatically downloads Version 2 to Bob's PC, extracts it safely, acquires the lock, and starts the server.
 5. Everyone (including Alice) now connects to **Bob's Radmin IP**!
 
 ---
