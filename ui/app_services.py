@@ -72,6 +72,7 @@ def try_build_real_services(
     server_dir = os.environ.get("BLOCKSYNC_SERVER_DIR")
     folder_id = os.environ.get("BLOCKSYNC_GDRIVE_FOLDER_ID")
     creds = os.environ.get("BLOCKSYNC_CREDENTIALS_FILE")
+    java_path = os.environ.get("BLOCKSYNC_JAVA_PATH", "java")
 
     if not all([world_dir, server_dir, folder_id, creds]):
         logger.info(
@@ -88,6 +89,7 @@ def try_build_real_services(
             gdrive_folder_id=folder_id,
             credentials_file=Path(creds),
             minecraft_version=os.environ.get("BLOCKSYNC_MC_VERSION", "1.21.4"),
+            java_path=java_path,
         )
         cfg.validate()
         cfg.ensure_work_dirs()

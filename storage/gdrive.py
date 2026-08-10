@@ -96,6 +96,7 @@ class GoogleDriveStorageProvider(StorageProvider):
         self._folder_id = folder_id
         self._credentials_file = credentials_file
         self._service = None           # lazy init
+        self._http = None
         self._snapshots_folder_id: Optional[str] = None
 
     # ── Authentication (lazy) ─────────────────────────────────────────────────
@@ -139,10 +140,9 @@ class GoogleDriveStorageProvider(StorageProvider):
                     token_file.write_text(creds.to_json(), encoding="utf-8")
                 logger.info("Google Drive service authenticated (OAuth 2.0 User)")
 
-            http = google_auth_httplib2.AuthorizedHttp(
-                creds, http=httplib2.Http(timeout=_HTTP_TIMEOUT_SECONDS)
-            )
-            self._service = build("drive", "v3", http=http, cache_discovery=False)
+            self._http = httplib2.Http(timeout=_HTTP_TIMEOUT_SECONDS)
+            auth_http = google_auth_httplib2.AuthorizedHttp(creds, http=self._http)
+            self._service = build("drive", "v3", http=auth_http, cache_discovery=False)
         except Exception as exc:
             raise StorageUnavailableError(
                 f"Failed to authenticate with Google Drive: {exc}"
@@ -165,7 +165,13 @@ class GoogleDriveStorageProvider(StorageProvider):
                     "Drive API network/SSL glitch (attempt %d/%d): %s",
                     attempt + 1, retries, exc,
                 )
-                self._service = None  # reset service to open fresh connection
+                if self._http is not None:
+                    try:
+                        self._http.connections.clear()
+                    except Exception:
+                        pass
+                self._service = None
+                self._http = None
                 time.sleep(delay * (attempt + 1))
         raise StorageUnavailableError(f"Drive network error: {last_exc}") from last_exc
 
@@ -208,27 +214,19 @@ class GoogleDriveStorageProvider(StorageProvider):
     # ── Snapshots ─────────────────────────────────────────────────────────────
 
     def upload_snapshot(self, local_path: Path, remote_name: str) -> str:
-        """Upload *local_path* to the ``snapshots/`` sub-folder on Drive.
-
-        Returns the Drive file ID of the uploaded snapshot.
-        """
+        """Upload a snapshot archive to ``snapshots/`` on Drive."""
+        local_path = Path(local_path)
         if not local_path.exists():
-            raise UploadError(f"Local snapshot not found: {local_path}")
+            raise SnapshotNotFoundError(f"Local snapshot file not found: {local_path}")
 
         snapshots_folder_id = self._get_or_create_snapshots_folder()
-        size = local_path.stat().st_size
 
-        logger.info(
-            "Uploading snapshot %s (%.1f MB) …", remote_name, size / 1_048_576
-        )
-        try:
+        def _do_upload():
             file_id = self._find_file(remote_name, snapshots_folder_id)
-
             media = MediaFileUpload(
                 str(local_path),
                 mimetype=_MIME_OCTET,
-                resumable=(size > _RESUMABLE_THRESHOLD),
-                chunksize=10 * 1024 * 1024,  # 10 MB chunks
+                resumable=False,
             )
             svc = self._get_service()
 
@@ -238,21 +236,23 @@ class GoogleDriveStorageProvider(StorageProvider):
                     "parents": [snapshots_folder_id],
                 }
                 result = svc.files().create(
-                    body=meta, media_body=media, fields="id"
+                    body=meta, media_body=media, fields="id", supportsAllDrives=True
                 ).execute()
                 file_id = result["id"]
             else:
                 result = svc.files().update(
-                    fileId=file_id, media_body=media, fields="id"
+                    fileId=file_id, media_body=media, fields="id", supportsAllDrives=True
                 ).execute()
                 file_id = result["id"]
 
             logger.info("Snapshot uploaded: %s (file_id=%s)", remote_name, file_id)
             return file_id
 
+        try:
+            return self._with_retry(_do_upload)
         except StorageError:
             raise
-        except HttpError as exc:
+        except Exception as exc:
             raise UploadError(f"Failed to upload {remote_name}: {exc}") from exc
 
     def download_snapshot(
@@ -433,7 +433,10 @@ class GoogleDriveStorageProvider(StorageProvider):
                 logger.warning(
                     "Multiple files named %r in folder %r; using first", name, parent_id
                 )
-            return files[0]["id"]
+            for f in files:
+                if isinstance(f, dict) and "id" in f:
+                    return f["id"]
+            return None
 
         return self._with_retry(_call)
 
