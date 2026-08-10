@@ -1,0 +1,14 @@
+# Google Drive
+google-auth>=2.0
+google-api-python-client>=2.0
+google-auth-oauthlib>=1.0
+
+# Compression
+zstandard>=0.22.0
+
+# HTTP (for Mojang version manifest)
+requests>=2.31.0
+
+# Testing
+pytest>=8.0
+pytest-mock>=3.12

@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# ─── CREDENTIALS — NEVER COMMIT ───────────────────────────────────────────────
+service_account.json
+credentials.json
+token.json
+*.json
+# Re-allow non-credential JSON if needed:
+!config/default_config.json
+
+# ─── WORLD DATA ────────────────────────────────────────────────────────────────
+# Local world directories are user-managed; don't track them
+world/
+world.new/
+world.backup/
+*.tar.zst
+*.tar.gz
+*.zip
+
+# ─── MINECRAFT SERVER ──────────────────────────────────────────────────────────
+server.jar
+server.jar.tmp
+logs/
+crash-reports/
+ops.json
+whitelist.json
+banned-ips.json
+banned-players.json
+usercache.json
+eula.txt
+server.properties
+
+# ─── BLOCKSYNC RUNTIME ─────────────────────────────────────────────────────────
+data/
+snapshots/
+.blocksync/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
