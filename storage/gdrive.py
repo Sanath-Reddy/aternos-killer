@@ -41,7 +41,10 @@ from typing import Optional
 
 import httplib2
 import google_auth_httplib2
+from google.auth.transport.requests import Request
 from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
@@ -79,12 +82,14 @@ _HTTP_TIMEOUT_SECONDS = 15.0
 class GoogleDriveStorageProvider(StorageProvider):
     """Google Drive implementation of ``StorageProvider``.
 
+    Supports both Google Service Account keys and OAuth 2.0 Client Secret keys.
+
     Parameters
     ----------
     folder_id:
         ID of the shared Google Drive folder.
     credentials_file:
-        Absolute path to the service account JSON key file.
+        Absolute path to the service account or OAuth client secret JSON key file.
     """
 
     def __init__(self, folder_id: str, credentials_file: Path) -> None:
@@ -100,18 +105,44 @@ class GoogleDriveStorageProvider(StorageProvider):
         if self._service is not None:
             return self._service
         try:
-            creds = service_account.Credentials.from_service_account_file(
-                str(self._credentials_file), scopes=_SCOPES
-            )
+            if not self._credentials_file.exists():
+                raise StorageUnavailableError(
+                    f"Credentials file not found: {self._credentials_file}"
+                )
+
+            with open(self._credentials_file, "r", encoding="utf-8") as f:
+                cred_data = json.load(f)
+
+            if cred_data.get("type") == "service_account":
+                creds = service_account.Credentials.from_service_account_file(
+                    str(self._credentials_file), scopes=_SCOPES
+                )
+                logger.info("Google Drive service authenticated (service account)")
+            else:
+                # OAuth 2.0 Client Secret (User Account)
+                token_file = self._credentials_file.parent / "token.json"
+                creds = None
+                if token_file.exists():
+                    try:
+                        creds = Credentials.from_authorized_user_file(str(token_file), _SCOPES)
+                    except Exception as exc:
+                        logger.warning("Could not read existing token.json: %s", exc)
+
+                if not creds or not creds.valid:
+                    if creds and creds.expired and creds.refresh_token:
+                        creds.refresh(Request())
+                    else:
+                        flow = InstalledAppFlow.from_client_secrets_file(
+                            str(self._credentials_file), _SCOPES
+                        )
+                        creds = flow.run_local_server(port=0)
+                    token_file.write_text(creds.to_json(), encoding="utf-8")
+                logger.info("Google Drive service authenticated (OAuth 2.0 User)")
+
             http = google_auth_httplib2.AuthorizedHttp(
                 creds, http=httplib2.Http(timeout=_HTTP_TIMEOUT_SECONDS)
             )
             self._service = build("drive", "v3", http=http, cache_discovery=False)
-            logger.info("Google Drive service authenticated (service account)")
-        except FileNotFoundError as exc:
-            raise StorageUnavailableError(
-                f"Service account file not found: {self._credentials_file}"
-            ) from exc
         except Exception as exc:
             raise StorageUnavailableError(
                 f"Failed to authenticate with Google Drive: {exc}"
@@ -388,7 +419,13 @@ class GoogleDriveStorageProvider(StorageProvider):
                 f"and '{parent_id}' in parents "
                 f"and trashed = false"
             )
-            result = svc.files().list(q=q, fields="files(id)", pageSize=2).execute()
+            result = svc.files().list(
+                q=q,
+                fields="files(id)",
+                pageSize=2,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            ).execute()
             files = result.get("files", [])
             if not files:
                 return None
@@ -403,7 +440,7 @@ class GoogleDriveStorageProvider(StorageProvider):
     def _download_as_bytes(self, file_id: str) -> bytes:
         def _call():
             svc = self._get_service()
-            request = svc.files().get_media(fileId=file_id)
+            request = svc.files().get_media(fileId=file_id, supportsAllDrives=True)
             buf = io.BytesIO()
             downloader = MediaIoBaseDownload(buf, request)
             done = False
@@ -421,7 +458,9 @@ class GoogleDriveStorageProvider(StorageProvider):
             from googleapiclient.http import MediaIoBaseUpload
             media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime)
             meta = {"name": name, "parents": [parent_id]}
-            result = svc.files().create(body=meta, media_body=media, fields="id").execute()
+            result = svc.files().create(
+                body=meta, media_body=media, fields="id", supportsAllDrives=True
+            ).execute()
             return result["id"]
 
         return self._with_retry(_call)
@@ -431,7 +470,9 @@ class GoogleDriveStorageProvider(StorageProvider):
             from googleapiclient.http import MediaIoBaseUpload
             svc = self._get_service()
             media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime)
-            svc.files().update(fileId=file_id, media_body=media).execute()
+            svc.files().update(
+                fileId=file_id, media_body=media, supportsAllDrives=True
+            ).execute()
 
         return self._with_retry(_call)
 
@@ -443,14 +484,19 @@ class GoogleDriveStorageProvider(StorageProvider):
         folder_id = self._find_file(_SNAPSHOTS_FOLDER, self._folder_id)
         if folder_id is None:
             logger.info("Creating 'snapshots' subfolder on Drive")
-            svc = self._get_service()
-            meta = {
-                "name": _SNAPSHOTS_FOLDER,
-                "mimeType": "application/vnd.google-apps.folder",
-                "parents": [self._folder_id],
-            }
-            result = svc.files().create(body=meta, fields="id").execute()
-            folder_id = result["id"]
+            def _create():
+                svc = self._get_service()
+                meta = {
+                    "name": _SNAPSHOTS_FOLDER,
+                    "mimeType": "application/vnd.google-apps.folder",
+                    "parents": [self._folder_id],
+                }
+                result = svc.files().create(
+                    body=meta, fields="id", supportsAllDrives=True
+                ).execute()
+                return result["id"]
+
+            folder_id = self._with_retry(_create)
 
         self._snapshots_folder_id = folder_id
         return folder_id
